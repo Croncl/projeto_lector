@@ -1,0 +1,57 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ── Ambientes virtuais ────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Outputs gerados pelo extrator ────────────────────────────
+*.html
+*_figuras/
+*_imagens/
+*_tabelas.json
+output*.json
+output*.txt
+blocos*.json
+
+# ── Arquivos temporários do sistema ──────────────────────────
+*.tmp
+*.log
+*.bak
+
+# ── IDEs e editores ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Distribuição / build Python ───────────────────────────────
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ── Testes e cobertura ────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Variáveis de ambiente ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Docker ───────────────────────────────────────────────────
+# (Dockerfile e compose são versionados — apenas artefatos ignorados)
+docker-data/
+
+# ── Materiais de estudo grandes (opcional — remova se quiser versionar)
+# materiais/
