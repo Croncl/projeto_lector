@@ -13,6 +13,8 @@ ENV/
 
 # ── Outputs gerados pelo extrator ────────────────────────────
 *.html
+# Exceção: o arquivo de frontend não deve ser ignorado
+!app/static/index.html
 *_figuras/
 *_imagens/
 *_tabelas.json
