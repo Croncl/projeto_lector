@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lector - Document Processor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-1: #0f172a;
+            --bg-2: #1e293b;
+            --primary: #38bdf8;
+            --secondary: #818cf8;
+            --accent: #f472b6;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-1);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        /* Animated Background Gradients */
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+            top: -200px;
+            left: -200px;
+            opacity: 0.15;
+            filter: blur(80px);
+            z-index: -1;
+            animation: float 10s infinite alternate ease-in-out;
+        }
+
+        .bg-glow-2 {
+            position: fixed;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+            bottom: -100px;
+            right: -100px;
+            opacity: 0.15;
+            filter: blur(80px);
+            z-index: -1;
+            animation: float 12s infinite alternate-reverse ease-in-out;
+        }
+
+        @keyframes float {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(50px, 50px) scale(1.1); }
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 1rem 1rem;
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -1px;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 300;
+        }
+
+        main {
+            flex: 1;
+            max-width: 900px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Glass Panel */
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 2rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed var(--glass-border);
+            border-radius: 16px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            background: rgba(15, 23, 42, 0.4);
+        }
+
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(56, 189, 248, 0.05);
+            transform: translateY(-2px);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            display: inline-block;
+            transition: transform 0.3s ease;
+        }
+
+        .upload-zone:hover .upload-icon {
+            transform: translateY(-5px);
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 0.5rem;
+        }
+
+        .upload-hint {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        /* File Info */
+        .file-info {
+            display: none;
+            align-items: center;
+            gap: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1rem;
+            border-radius: 12px;
+            margin-top: 1rem;
+            border: 1px solid var(--glass-border);
+        }
+
+        .file-info.visible {
+            display: flex;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .file-icon {
+            font-size: 2rem;
+        }
+
+        .file-details {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .file-name {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-size {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .file-remove {
+            background: transparent;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 1.5rem;
+            transition: transform 0.2s;
+        }
+
+        .file-remove:hover {
+            transform: scale(1.2);
+        }
+
+        /* Controls */
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .control-group label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        select, input[type="text"] {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            outline: none;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        select:focus, input[type="text"]:focus {
+            border-color: var(--primary);
+        }
+
+        /* Action Buttons */
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        button.btn {
+            padding: 0.8rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(56, 189, 248, 0.6);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            border: 1px solid var(--glass-border);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Results Area */
+        #results-container {
+            display: none;
+            margin-top: 2rem;
+            animation: slideUp 0.5s ease;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .result-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .result-content {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        pre {
+            padding: 1.5rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: #a6e3a1;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+            background: white; /* Iframe contents might need white bg depending on output */
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--accent);
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            color: white;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <div class="bg-glow-2"></div>
+
+    <header>
+        <h1>Lector</h1>
+        <p class="subtitle">Processador Inteligente de Documentos</p>
+    </header>
+
+    <main>
+        <div class="glass-panel">
+            <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">Arraste e solte seu arquivo aqui</div>
+                <div class="upload-hint">PDF, Jupyter Notebook (.ipynb) ou Imagens (.png, .jpg)</div>
+                <input type="file" id="file-input" accept=".pdf,.ipynb,.png,.jpg,.jpeg,.webp">
+            </div>
+
+            <div class="file-info" id="file-info">
+                <div class="file-icon">📚</div>
+                <div class="file-details">
+                    <div class="file-name" id="file-name">documento.pdf</div>
+                    <div class="file-size" id="file-size">2.5 MB</div>
+                </div>
+                <button class="file-remove" onclick="removeFile()" title="Remover arquivo">×</button>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label for="modo">Ação Desejada</label>
+                    <select id="modo">
+                        <option value="html">Gerar HTML Estilizado</option>
+                        <option value="blocos">Extrair para LLM (Blocos JSON)</option>
+                        <option value="txt">Extrair Texto Simples</option>
+                        <option value="diagnostico">Apenas Diagnóstico</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="paginas">Páginas (Opcional)</label>
+                    <input type="text" id="paginas" placeholder="Ex: 1-10, 15" autocomplete="off">
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-primary" id="btn-process" onclick="processDocument()">
+                    <span class="spinner" id="process-spinner"></span>
+                    <span id="process-text">Processar Documento</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="results-container" class="glass-panel">
+            <div class="result-header">
+                <div class="result-title">Resultado</div>
+                <button class="btn btn-secondary" onclick="downloadResult()" id="btn-download" style="min-width:auto; padding:0.5rem 1rem;">⬇️ Baixar</button>
+            </div>
+            <div class="result-content" id="result-content">
+                <!-- Content injected here (pre or iframe) -->
+            </div>
+        </div>
+    </main>
+
+    <div class="toast" id="toast">Notificação aqui</div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileInfo = document.getElementById('file-info');
+        const fileName = document.getElementById('file-name');
+        const fileSize = document.getElementById('file-size');
+        const btnProcess = document.getElementById('btn-process');
+        let currentFile = null;
+        let lastResultBlob = null;
+        let lastResultName = 'resultado';
+
+        // Drag & Drop Handling
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+        });
+
+        dropZone.addEventListener('drop', handleDrop, false);
+        fileInput.addEventListener('change', function() {
+            handleFiles(this.files);
+        });
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                currentFile = files[0];
+                updateFileInfo();
+            }
+        }
+
+        function updateFileInfo() {
+            if (!currentFile) return;
+            dropZone.style.display = 'none';
+            fileInfo.classList.add('visible');
+            fileName.textContent = currentFile.name;
+            fileSize.textContent = (currentFile.size / (1024 * 1024)).toFixed(2) + ' MB';
+            document.getElementById('results-container').style.display = 'none';
+        }
+
+        function removeFile() {
+            currentFile = null;
+            fileInput.value = '';
+            fileInfo.classList.remove('visible');
+            dropZone.style.display = 'block';
+            document.getElementById('results-container').style.display = 'none';
+        }
+
+        function showToast(msg, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.style.borderColor = isError ? 'var(--accent)' : 'var(--gn, #a6e3a1)';
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 4000);
+        }
+
+        function setLoading(isLoading) {
+            const spinner = document.getElementById('process-spinner');
+            const text = document.getElementById('process-text');
+            
+            if (isLoading) {
+                btnProcess.disabled = true;
+                spinner.style.display = 'block';
+                text.textContent = 'Processando...';
+            } else {
+                btnProcess.disabled = false;
+                spinner.style.display = 'none';
+                text.textContent = 'Processar Documento';
+            }
+        }
+
+        async function processDocument() {
+            if (!currentFile) {
+                showToast('Por favor, selecione um arquivo primeiro.', true);
+                return;
+            }
+
+            const modo = document.getElementById('modo').value;
+            let endpoint = '/extract';
+            if (modo === 'html') endpoint = '/html';
+            if (modo === 'diagnostico') endpoint = '/diagnostico';
+
+            const formData = new FormData();
+            formData.append('arquivo', currentFile);
+            
+            const pgs = document.getElementById('paginas').value;
+            if (pgs.trim() !== '') {
+                formData.append('paginas', pgs);
+            }
+
+            if (endpoint === '/extract') {
+                formData.append('modo', modo); // 'txt' ou 'blocos'
+            }
+
+            setLoading(true);
+            document.getElementById('results-container').style.display = 'none';
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errInfo = await response.json().catch(() => ({}));
+                    throw new Error(errInfo.detail || `Erro do servidor (${response.status})`);
+                }
+
+                const resultContainer = document.getElementById('results-container');
+                const contentDiv = document.getElementById('result-content');
+                contentDiv.innerHTML = ''; // Clear previous
+
+                if (endpoint === '/html') {
+                    const htmlText = await response.text();
+                    lastResultBlob = new Blob([htmlText], { type: 'text/html' });
+                    lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + ".html";
+                    
+                    const iframe = document.createElement('iframe');
+                    contentDiv.appendChild(iframe);
+                    // Write to iframe safely
+                    iframe.contentWindow.document.open();
+                    iframe.contentWindow.document.write(htmlText);
+                    iframe.contentWindow.document.close();
+                } else if (endpoint === '/diagnostico') {
+                    const diag = await response.json();
+                    
+                    // Build a beautiful diagnostic UI
+                    const isPdf = diag.tipo === 'pdf';
+                    const recMethod = diag.metodo_recomendado === 'texto' ? 'Texto Direto' : 
+                                      (diag.metodo_recomendado === 'ocr' ? 'Leitura Óptica (OCR)' : 'Análise Visual');
+                    const recFormat = diag.formato_recomendado === 'blocos' ? 'Blocos JSON (Preserva Imagens)' : 'Texto Simples (TXT)';
+                    
+                    let htmlDiag = `
+                        <div style="padding: 2rem; color: var(--text-main);">
+                            <h2 style="color: var(--primary); margin-bottom: 1rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem;">Relatório de Diagnóstico</h2>
+                            
+                            <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+                                <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); border-radius: 8px; padding: 1rem; flex: 1; min-width: 200px;">
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">Tamanho</div>
+                                    <div style="font-size: 1.5rem; font-weight: 600;">${diag.paginas} ${isPdf ? 'Páginas' : (diag.tipo === 'imagem' ? 'Arquivo' : 'Células')}</div>
+                                </div>
+                                <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); border-radius: 8px; padding: 1rem; flex: 1; min-width: 200px;">
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">Conteúdo</div>
+                                    <div style="font-size: 1rem; margin-top: 0.2rem;">
+                                        ${diag.tem_imagens ? '🖼️ Contém Imagens<br>' : ''}
+                                        ${diag.tem_tabelas ? '📊 Contém Tabelas<br>' : ''}
+                                        ${!diag.tem_imagens && !diag.tem_tabelas ? '📝 Apenas Texto' : ''}
+                                    </div>
+                                </div>
+                                ${isPdf ? `
+                                <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); border-radius: 8px; padding: 1rem; flex: 1; min-width: 200px;">
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">Saúde do Arquivo</div>
+                                    <div style="font-size: 1rem; margin-top: 0.2rem;">
+                                        ${diag.texto_extraivel ? '✅ Texto Digital Nativo' : '❌ Não copiável'}<br>
+                                        ${diag.parece_scan ? '⚠️ Documento Escaneado' : ''}
+                                    </div>
+                                </div>
+                                ` : ''}
+                            </div>
+
+                            <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--primary); padding: 1.5rem; border-radius: 0 8px 8px 0; margin-bottom: 2rem;">
+                                <h3 style="color: var(--primary); margin-bottom: 0.8rem; font-size: 1.1rem;">💡 Ação Recomendada</h3>
+                                <ul style="margin-left: 1.5rem; line-height: 1.7;">
+                                    <li><strong>Motor Ideal:</strong> O arquivo será lido com <strong>${recMethod}</strong>.</li>
+                                    ${diag.tem_imagens ? 
+                                    '<li><strong>Formato Ideal:</strong> Como o arquivo <strong>possui imagens</strong>, selecione a ação <strong>Extrair para LLM (Blocos JSON)</strong>. Esta é a única opção que preserva os gráficos e fotos para a Inteligência Artificial.</li>' : 
+                                    '<li><strong>Formato Ideal:</strong> Como o arquivo <strong>não possui imagens</strong>, selecione a ação <strong>Extrair Texto Simples</strong> para uma leitura mais limpa e direta.</li>'}
+                                </ul>
+                            </div>
+                    `;
+
+                    if (diag.metadados && Object.keys(diag.metadados).length > 0) {
+                        htmlDiag += `
+                            <h3 style="color: var(--text-muted); font-size: 1rem; margin-bottom: 1rem;">Metadados do Arquivo</h3>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                        `;
+                        for (const [key, value] of Object.entries(diag.metadados)) {
+                            if(key !== 'paginas_total' && value) {
+                                htmlDiag += `
+                                    <tr style="border-bottom: 1px solid var(--glass-border);">
+                                        <td style="padding: 0.8rem; color: var(--primary); width: 30%; font-weight: 600;">${key}</td>
+                                        <td style="padding: 0.8rem;">${value}</td>
+                                    </tr>
+                                `;
+                            }
+                        }
+                        htmlDiag += `</table>`;
+                    }
+
+                    htmlDiag += `</div>`;
+                    
+                    contentDiv.innerHTML = htmlDiag;
+                    
+                    // We also save the raw JSON for the download button
+                    const rawJson = JSON.stringify(diag, null, 2);
+                    lastResultBlob = new Blob([rawJson], { type: 'application/json' });
+                    lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + "_diagnostico.json";
+
+                } else {
+                    const contentType = response.headers.get("content-type");
+                    let text = '';
+                    if (contentType && contentType.includes("application/json")) {
+                        const json = await response.json();
+                        text = JSON.stringify(json, null, 2);
+                        lastResultBlob = new Blob([text], { type: 'application/json' });
+                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + "_resultado.json";
+                    } else {
+                        text = await response.text();
+                        lastResultBlob = new Blob([text], { type: 'text/plain' });
+                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + ".txt";
+                    }
+                    const pre = document.createElement('pre');
+                    pre.textContent = text;
+                    contentDiv.appendChild(pre);
+                }
+
+                resultContainer.style.display = 'block';
+                showToast('Processamento concluído com sucesso!');
+
+                // Scroll to results
+                setTimeout(() => {
+                    resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
+
+            } catch (error) {
+                console.error(error);
+                showToast(error.message, true);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function downloadResult() {
+            if (!lastResultBlob) return;
+            const url = window.URL.createObjectURL(lastResultBlob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = lastResultName;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
+    </script>
+</body>
+</html>
