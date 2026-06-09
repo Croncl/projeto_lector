@@ -289,6 +289,7 @@ async def gerar_html(
     metodo: Literal["auto", "texto", "ocr"] = Form("auto"),
     tamanho_min_img: int = Form(5),
     ocr_figuras: bool = Form(False),
+    tabelas_ocr: bool = Form(False),
 ):
     """
     Retorna um HTML dark-theme completo e auto-contido
@@ -312,7 +313,7 @@ async def gerar_html(
             figs = ext.extrair_figuras(str(tmp), paginas=pags,
                                        tamanho_minimo_kb=tamanho_min_img,
                                        descrever_com_ocr=ocr_figuras) if diag["tem_imagens"] else []
-            tabs = ext.extrair_tabelas(str(tmp), paginas=pags) if diag["tem_tabelas"] else []
+            tabs = ext.extrair_tabelas(str(tmp), paginas=pags, ocr_fallback=tabelas_ocr) if diag["tem_tabelas"] else []
             heads = ext.extrair_headings(str(tmp))
             meta = ext.extrair_metadados(str(tmp))
 
@@ -408,6 +409,7 @@ async def figuras(
 async def tabelas(
     arquivo: UploadFile = File(..., description="Arquivo PDF (ipynb não suportado)"),
     paginas: Optional[str] = Form(None),
+    tabelas_ocr: bool = Form(False),
 ):
     """Extrai tabelas do PDF (não disponível para notebooks)."""
     tmp = await _save_upload(arquivo)
@@ -415,7 +417,7 @@ async def tabelas(
         if _detect_ipynb(arquivo.filename):
             raise HTTPException(status_code=422, detail="Extração de tabelas não suportada para .ipynb")
         pags = _parse_paginas(paginas)
-        tabs = ext.extrair_tabelas(str(tmp), paginas=pags)
+        tabs = ext.extrair_tabelas(str(tmp), paginas=pags, ocr_fallback=tabelas_ocr)
         tabs_clean = [{k: v for k, v in t.items() if k != "html"} for t in tabs]
         return JSONResponse({"total": len(tabs_clean), "tabelas": tabs_clean})
     finally:

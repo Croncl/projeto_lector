@@ -270,42 +270,6 @@ def _ocr_em_imagem(dados_img: bytes, fmt: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════
-# 5. EXTRAÇÃO DE TABELAS
-# ══════════════════════════════════════════════════════════════
-
-def extrair_tabelas(pdf_path: str, paginas: list = None) -> list:
-    """
-    Extrai tabelas com pdfplumber.
-    Retorna lista com dados brutos e HTML pronto para embed.
-    """
-    try:
-        import pdfplumber
-    except ImportError:
-        print("⚠️  pdfplumber necessário: pip install pdfplumber")
-        return []
-
-    tabelas = []
-    with pdfplumber.open(pdf_path) as pdf:
-        nums = paginas if paginas else range(len(pdf.pages))
-        for i in nums:
-            if i >= len(pdf.pages):
-                continue
-            for t_idx, tbl in enumerate(pdf.pages[i].extract_tables()):
-                tbl = [l for l in tbl if any(c for c in l if c)]
-                if len(tbl) < 2:
-                    continue
-                tabelas.append({
-                    "pagina": i + 1,
-                    "indice": t_idx + 1,
-                    "linhas": len(tbl),
-                    "colunas": max(len(l) for l in tbl),
-                    "dados": tbl,
-                    "html": _tabela_para_html(tbl),
-                })
-                print(f"   📊 pág {i+1} | {len(tbl)} × {len(tbl[0])}")
-    return tabelas
-
-
 def _tabela_para_html(dados: list) -> str:
     html = ['<table class="extracted-table">']
     for r, linha in enumerate(dados):
@@ -316,6 +280,20 @@ def _tabela_para_html(dados: list) -> str:
         html.append("</tr>")
     html.append("</table>")
     return "\n".join(html)
+
+
+def _tabela_para_csv(dados: list) -> str:
+    """Converte tabela para formato CSV com escape de aspas."""
+    import csv
+    import io
+    
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator='\n')
+    for linha in dados:
+        # Sanitizar: converter None/vazio, escapar aspas
+        row = [str(c).strip() if c else "" for c in linha]
+        writer.writerow(row)
+    return buf.getvalue().strip()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -370,70 +348,156 @@ def extrair_headings(pdf_path: str) -> list:
 # 7. RASTERIZAÇÃO & OCR DE PÁGINAS
 # ══════════════════════════════════════════════════════════════
 
-def rasterizar_paginas(pdf_path: str, paginas: list = None,
-                       dpi: int = 150, pasta_saida: str = None) -> list:
-    if pasta_saida is None:
-        pasta_saida = tempfile.mkdtemp(prefix="pdf_imgs_")
-    os.makedirs(pasta_saida, exist_ok=True)
-    prefixo = os.path.join(pasta_saida, "pag")
-
-    if paginas:
-        cmd = ["pdftoppm", "-jpeg", "-r", str(dpi),
-               "-f", str(min(paginas)+1), "-l", str(max(paginas)+1), pdf_path, prefixo]
-    else:
-        cmd = ["pdftoppm", "-jpeg", "-r", str(dpi), pdf_path, prefixo]
-
+def extrair_tabelas(pdf_path: str, paginas: list = None, ocr_fallback: bool = False, dpi: int = 200) -> list:
+    """
+    Extrai tabelas com pdfplumber. Se `ocr_fallback` for True e nenhuma tabela
+    para a página for encontrada, tenta rasterizar a página e extrair uma
+    tabela via OCR (pytesseract) com heurística simples.
+    Retorna lista com dados brutos e HTML pronto para embed.
+    """
     try:
-        subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.CalledProcessError) as e:
-        print(f"⚠️  Erro na rasterização: {e}")
-        return []
-    return sorted([str(p) for p in Path(pasta_saida).glob("pag-*.jpg")])
-
-
-def extrair_texto_ocr(pdf_path: str, paginas: list = None, idioma: str = "por") -> dict:
-    """OCR completo de páginas com pytesseract."""
-    try:
-        import pytesseract
-        from PIL import Image
+        import pdfplumber
     except ImportError:
-        print("⚠️  pip install pytesseract pillow")
-        return {}
+        print("⚠️  pdfplumber necessário: pip install pdfplumber")
+        return []
 
-    imagens = rasterizar_paginas(pdf_path, paginas=paginas, dpi=200)
-    resultado = {}
-    for idx, img_path in enumerate(imagens):
-        num = (min(paginas) if paginas else 0) + idx + 1
-        try:
-            texto = pytesseract.image_to_string(Image.open(img_path), lang=idioma)
-            resultado[num] = texto.strip()
-            print(f"  OCR pág {num} ✓")
-        except Exception as e:
-            resultado[num] = f"[ERRO: {e}]"
-    return resultado
+    tabelas = []
+    with pdfplumber.open(pdf_path) as pdf:
+        nums = paginas if paginas else range(len(pdf.pages))
+        for i in nums:
+            if i >= len(pdf.pages):
+                continue
+
+            found = False
+            page = pdf.pages[i]
+            # Prefer table objects with bbox when available
+            tables_found = []
+            try:
+                tables_found = page.find_tables() or []
+            except Exception:
+                # Older pdfplumber may not have find_tables; fallback to extract_tables
+                try:
+                    raw = page.extract_tables()
+                    for idx, tbl in enumerate(raw):
+                        tables_found.append(tbl)
+                except Exception:
+                    tables_found = []
+
+            for t_idx, tbl_obj in enumerate(tables_found):
+                # tbl_obj may be a Table object (with .extract and .bbox) or raw list
+                try:
+                    if hasattr(tbl_obj, "extract"):
+                        tbl = tbl_obj.extract()
+                        bbox = getattr(tbl_obj, "bbox", None)
+                    else:
+                        tbl = tbl_obj
+                        bbox = None
+                except Exception:
+                    continue
+
+                tbl = [l for l in tbl if any(c for c in l if c)]
+                if len(tbl) < 2:
+                    continue
+
+                pagina_h = getattr(page, "height", None)
+                top = None
+                if bbox and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                    # bbox is (x0, top, x1, bottom) in pdfplumber
+                    top = float(bbox[1])
+
+                tabelas.append({
+                    "pagina": i + 1,
+                    "indice": t_idx + 1,
+                    "linhas": len(tbl),
+                    "colunas": max(len(l) for l in tbl),
+                    "dados": tbl,
+                    "html": _tabela_para_html(tbl),
+                    "fonte": "pdfplumber",
+                    "bbox": bbox,
+                    "top": top,
+                    "page_height": pagina_h,
+                })
+                if tbl and tbl[0]:
+                    print(f"   📊 pág {i+1} | {len(tbl)} × {len(tbl[0])}")
+                else:
+                    print(f"   📊 pág {i+1} | {len(tbl)} linhas")
+                found = True
+
+            # Fallback OCR: rasterizar página e tentar extrair tabela do texto
+            if not found and ocr_fallback:
+                imgs = rasterizar_paginas(pdf_path, paginas=[i], dpi=dpi)
+                for img_path in imgs:
+                    try:
+                        from PIL import Image
+                        import pytesseract
+                        img = Image.open(img_path)
+                        # PSM 6 - assume a single uniform block of text
+                        txt = pytesseract.image_to_string(img, lang="por+eng", config='--psm 6')
+                        rows = _parse_table_text_to_rows(txt)
+                        if rows and len(rows) >= 2:
+                            tabelas.append({
+                                "pagina": i + 1,
+                                "indice": 1,
+                                "linhas": len(rows),
+                                "colunas": max(len(r) for r in rows),
+                                "dados": rows,
+                                "html": _tabela_para_html(rows),
+                                "fonte": "ocr",
+                                "heuristica_conf": "low",
+                                "bbox": None,
+                                "top": None,
+                                "page_height": None,
+                            })
+                            print(f"   📊 OCR pág {i+1} ✓ | {len(rows)} × {len(rows[0])}")
+                            break
+                    except Exception:
+                        continue
+
+    return tabelas
 
 
-# ══════════════════════════════════════════════════════════════
-# 8. GERAÇÃO DE HTML COMPLETO
-# ══════════════════════════════════════════════════════════════
-
-def gerar_html(texto_por_pagina: dict, figuras: list, tabelas: list,
-               headings: list, metadados: dict, caminho_saida: str, is_ipynb: bool = False):
+def _parse_table_text_to_rows(text: str) -> list:
+    """Tenta converter texto (OCR) em linhas de tabela (lista de listas).
+    Estratégia simples: detectar delimitador (vírgula, tab) ou split por 2+ espaços.
     """
-    Gera HTML dark-theme completo com figuras inline (base64),
-    tabelas estilizadas, sidebar navegável e todo o texto.
-    Nenhuma dependência externa — arquivo único, funciona offline.
-    """
-    titulo = metadados.get("title") or Path(caminho_saida).stem
-    autor  = metadados.get("author") or "Autor desconhecido"
+    import re
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return []
 
-    figs_pag  = {}
-    for f in figuras:
-        figs_pag.setdefault(f["pagina"], []).append(f)
+    # Detect delimiter
+    comma_count = sum(1 for l in lines[:10] if "," in l)
+    tab_count = sum(1 for l in lines[:10] if "\t" in l)
+    if comma_count >= max(1, len(lines[:10])//3):
+        delim = ","
+    elif tab_count > 0:
+        delim = "\t"
+    else:
+        delim = None
 
-    tabs_pag  = {}
-    for t in tabelas:
-        tabs_pag.setdefault(t["pagina"], []).append(t)
+    rows = []
+    if delim:
+        for l in lines:
+            rows.append([c.strip() for c in l.split(delim)])
+        return rows
+
+    # Fallback: split on 2+ spaces (fixed width-like)
+    for l in lines:
+        parts = re.split(r"\s{2,}", l)
+        if len(parts) >= 2:
+            rows.append([p.strip() for p in parts])
+
+    # If still one-column, try splitting by single space and heuristics (last resort)
+    if rows and max(len(r) for r in rows) >= 2:
+        return rows
+
+    # try naive split by single space if consistent cols detected
+    candidate = [l.split() for l in lines]
+    maxcols = max(len(r) for r in candidate)
+    if maxcols > 1:
+        return candidate
+
+    return []
 
     # Sidebar navigation
     nav_items = ""
@@ -641,18 +705,110 @@ figcaption{{margin-top:.75rem;font-size:.83rem;color:var(--mt);text-align:left}}
 # 9. SALVAR RESULTADOS
 # ══════════════════════════════════════════════════════════════
 
-def salvar_txt(resultado: dict, caminho: str):
+def salvar_txt(resultado: dict, caminho: str, tabelas: list = None):
+    """Salva texto + tabelas intercaladas (tabelas no local original com marcação clara para cópia CSV)."""
+    # Agrupar tabelas por página
+    tabs_por_pag = {}
+    if tabelas:
+        for tab in tabelas:
+            pag = tab["pagina"]
+            tabs_por_pag.setdefault(pag, []).append(tab)
+    
     with open(caminho, "w", encoding="utf-8") as f:
         for p, t in sorted(resultado.items()):
-            if t:
-                f.write(f"\n{'='*60}\n  PÁGINA {p}\n{'='*60}\n\n{t}\n")
+            if not t:
+                continue
+
+            # Se houver tabelas com posições (top/page_height), tentar inserir próximo
+            # à posição relativa na página. Caso contrário, anexa após o texto.
+            linhas = t.splitlines()
+            page_lines = linhas[:]
+            inserts = []
+            if p in tabs_por_pag:
+                for tab in sorted(tabs_por_pag[p], key=lambda x: (x.get('top') is None, x.get('top', 0))):
+                    top = tab.get('top')
+                    ph = tab.get('page_height')
+                    if top and ph and ph > 0 and linhas:
+                        ratio = max(0.0, min(1.0, top / ph))
+                        insert_at = int(ratio * len(linhas))
+                    else:
+                        insert_at = len(linhas)
+                    inserts.append((insert_at, tab))
+
+            # Construir texto com inserções
+            out_lines = []
+            cur = 0
+            for insert_at, tab in inserts:
+                # escreve linhas até insert_at
+                while cur < insert_at and cur < len(linhas):
+                    out_lines.append(linhas[cur])
+                    cur += 1
+
+                # inserir bloco de tabela
+                out_lines.append('-'*60)
+                out_lines.append(f"[INÍCIO CSV - TABELA {tab['indice']} - {tab['linhas']} linhas × {tab['colunas']} colunas]")
+                out_lines.append('-'*60)
+                csv_data = _tabela_para_csv(tab['dados'])
+                out_lines.extend(csv_data.splitlines())
+                out_lines.append('-'*60)
+                out_lines.append(f"[FIM CSV - TABELA {tab['indice']}]")
+                out_lines.append('-'*60)
+
+            # write remaining lines
+            while cur < len(linhas):
+                out_lines.append(linhas[cur])
+                cur += 1
+
+            # If there were no inserts but there are tables (e.g., OCR without positions), append them
+            if p in tabs_por_pag and not any(tab.get('top') for tab in tabs_por_pag[p]):
+                for tab in tabs_por_pag[p]:
+                    out_lines.append('-'*60)
+                    out_lines.append(f"[INÍCIO CSV - TABELA {tab['indice']} - {tab['linhas']} linhas × {tab['colunas']} colunas]")
+                    out_lines.append('-'*60)
+                    csv_data = _tabela_para_csv(tab['dados'])
+                    out_lines.extend(csv_data.splitlines())
+                    out_lines.append('-'*60)
+                    out_lines.append(f"[FIM CSV - TABELA {tab['indice']}]")
+                    out_lines.append('-'*60)
+
+            # Escrever bloco da página
+            f.write(f"\n{'='*60}\n  PÁGINA {p}\n{'='*60}\n\n")
+            f.write("\n".join(out_lines))
+            f.write("\n")
+    
     print(f"✅ TXT: {caminho}")
 
 
-def salvar_json(resultado: dict, caminho: str):
+
+def salvar_json(resultado: dict, caminho: str, tabelas: list = None, headings: list = None, metadados: dict = None):
+    """Salva em JSON estruturado: conteudo, tabelas, headings, metadados."""
+    payload = {
+        "conteudo": {str(p): t for p, t in sorted(resultado.items()) if t},
+        "tabelas": [],
+        "headings": headings or [],
+        "metadados": {k: str(v) for k, v in (metadados or {}).items() if v} if metadados else {},
+    }
+
+    if tabelas:
+        # Normalizar e ordenar tabelas
+        for tab in sorted(tabelas, key=lambda x: (x.get("pagina", 0), x.get("indice", 0))):
+            t = {
+                "pagina": tab.get("pagina"),
+                "indice": tab.get("indice"),
+                "linhas": tab.get("linhas"),
+                "colunas": tab.get("colunas"),
+                "dados": tab.get("dados"),
+                "html": tab.get("html"),
+                "fonte": tab.get("fonte"),
+                "heuristica_conf": tab.get("heuristica_conf"),
+                "bbox": tab.get("bbox"),
+                "top": tab.get("top"),
+                "page_height": tab.get("page_height"),
+            }
+            payload["tabelas"].append(t)
+
     with open(caminho, "w", encoding="utf-8") as f:
-        json.dump({str(p): t for p, t in sorted(resultado.items()) if t},
-                  f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"✅ JSON: {caminho}")
 
 
@@ -866,6 +1022,8 @@ def main():
                    help="Extrai figuras como arquivos de imagem")
     p.add_argument("--tabelas", action="store_true",
                    help="Extrai tabelas como JSON")
+    p.add_argument("--tabelas-ocr", action="store_true",
+                   help="Tentar extrair tabelas via OCR quando o método padrão falhar")
     p.add_argument("--headings", action="store_true",
                    help="Lista headings detectados por tamanho de fonte")
     p.add_argument("--ocr-figuras", action="store_true",
@@ -960,7 +1118,7 @@ def main():
             print("\n⚠️ Tabelas não são suportadas em extração isolada de IPYNB.")
             return
         print(f"\n📊 Extraindo tabelas...")
-        tabs = extrair_tabelas(args.arquivo, paginas=paginas)
+        tabs = extrair_tabelas(args.arquivo, paginas=paginas, ocr_fallback=args.tabelas_ocr)
         saida = args.output or f"{stem}_tabelas.json"
         tabs_json = [{k: v for k, v in t.items() if k != "html"} for t in tabs]
         with open(saida, "w", encoding="utf-8") as f:
@@ -977,7 +1135,7 @@ def main():
                 figs_extraidas = extrair_figuras(args.arquivo, paginas=paginas, tamanho_minimo_kb=args.tamanho_min_img, descrever_com_ocr=args.ocr_figuras)
             if diag["tem_tabelas"]:
                 print("   Extraindo tabelas...")
-                tabs_extraidas = extrair_tabelas(args.arquivo, paginas=paginas)
+                tabs_extraidas = extrair_tabelas(args.arquivo, paginas=paginas, ocr_fallback=args.tabelas_ocr)
             headings_extraidos = extrair_headings(args.arquivo)
 
         saida = args.output or f"{stem}.html"
@@ -987,10 +1145,23 @@ def main():
     # ── Saída texto / json / blocos
     saida = args.output or f"{stem}.{'json' if args.modo == 'blocos' else args.modo}"
     print(f"\n💾 Salvando ({args.modo})...")
+    
     if args.modo == "txt":
-        salvar_txt(resultado, saida)
+        # Extrair tabelas para incluir no TXT (apenas PDF)
+        if not is_ipynb and diag.get("tem_tabelas"):
+            print("   Extraindo tabelas para incluir no TXT...")
+            tabs_extraidas = extrair_tabelas(args.arquivo, paginas=paginas, ocr_fallback=args.tabelas_ocr)
+        salvar_txt(resultado, saida, tabelas=tabs_extraidas if not is_ipynb else None)
     elif args.modo == "json":
-        salvar_json(resultado, saida)
+        # Extrair tabelas, headings e metadados para JSON estruturado
+        if not is_ipynb:
+            if diag.get("tem_tabelas"):
+                print("   Extraindo tabelas...")
+                tabs_extraidas = extrair_tabelas(args.arquivo, paginas=paginas, ocr_fallback=args.tabelas_ocr)
+            headings_extraidos = extrair_headings(args.arquivo)
+        salvar_json(resultado, saida, tabelas=tabs_extraidas if not is_ipynb else None,
+                   headings=headings_extraidos if not is_ipynb else None,
+                   metadados=metadados_extraidos if not is_ipynb else None)
     elif args.modo == "blocos":
         salvar_blocos_para_claude(resultado, saida, args.tokens)
 

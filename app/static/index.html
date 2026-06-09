@@ -305,6 +305,45 @@
             animation: spin 1s ease-in-out infinite;
         }
 
+        .progress-panel {
+            margin-top: 1.5rem;
+            display: none;
+            gap: 0.75rem;
+        }
+
+        .progress-label {
+            color: var(--text-main);
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .progress-bar-wrapper {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--glass-border);
+            border-radius: 999px;
+            overflow: hidden;
+            height: 14px;
+        }
+
+        progress {
+            width: 100%;
+            height: 100%;
+            appearance: none;
+            border: none;
+        }
+
+        progress::-webkit-progress-bar {
+            background: rgba(255,255,255,0.08);
+        }
+
+        progress::-webkit-progress-value {
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        progress::-moz-progress-bar {
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -433,6 +472,13 @@
                     <span id="process-text">Processar Documento</span>
                 </button>
             </div>
+
+            <div class="progress-panel" id="progress-panel">
+                <div class="progress-label" id="progress-label">Aguardando ação...</div>
+                <div class="progress-bar-wrapper">
+                    <progress id="progress-bar" value="0" max="100"></progress>
+                </div>
+            </div>
         </div>
 
         <div id="results-container" class="glass-panel">
@@ -455,6 +501,9 @@
         const fileName = document.getElementById('file-name');
         const fileSize = document.getElementById('file-size');
         const btnProcess = document.getElementById('btn-process');
+        const progressPanel = document.getElementById('progress-panel');
+        const progressBar = document.getElementById('progress-bar');
+        const progressLabel = document.getElementById('progress-label');
         let currentFile = null;
         let lastResultBlob = null;
         let lastResultName = 'resultado';
@@ -529,11 +578,20 @@
                 btnProcess.disabled = true;
                 spinner.style.display = 'block';
                 text.textContent = 'Processando...';
+                progressPanel.style.display = 'flex';
+                setProgress(0, 'Preparando upload...');
             } else {
                 btnProcess.disabled = false;
                 spinner.style.display = 'none';
                 text.textContent = 'Processar Documento';
+                progressPanel.style.display = 'none';
+                setProgress(0, 'Aguardando ação...');
             }
+        }
+
+        function setProgress(value, message) {
+            progressBar.value = value;
+            progressLabel.textContent = message;
         }
 
         async function processDocument() {
@@ -563,40 +621,85 @@
             document.getElementById('results-container').style.display = 'none';
 
             try {
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    body: formData
+                const responseBlob = await new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', endpoint);
+                    xhr.responseType = 'blob';
+
+                    xhr.upload.onprogress = function(event) {
+                        if (event.lengthComputable) {
+                            const percent = Math.round((event.loaded / event.total) * 70);
+                            setProgress(percent, `Enviando arquivo... ${percent}%`);
+                        }
+                    };
+
+                    xhr.onloadstart = function() {
+                        setProgress(5, 'Iniciando upload...');
+                    };
+
+                    xhr.onload = function() {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve(xhr.response);
+                        } else {
+                            const contentType = xhr.getResponseHeader('content-type') || '';
+                            if (contentType.includes('application/json')) {
+                                xhr.response.text().then(text => {
+                                    try {
+                                        const data = JSON.parse(text);
+                                        reject(new Error(data.detail || data.message || `Erro do servidor (${xhr.status})`));
+                                    } catch (e) {
+                                        reject(new Error(`Erro do servidor (${xhr.status})`));
+                                    }
+                                });
+                            } else {
+                                reject(new Error(`Erro do servidor (${xhr.status})`));
+                            }
+                        }
+                    };
+
+                    xhr.onerror = function() {
+                        reject(new Error('Falha de rede ao enviar o arquivo.'));
+                    };
+
+                    xhr.onabort = function() {
+                        reject(new Error('Upload abortado.'));
+                    };
+
+                    xhr.onloadend = function() {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            setProgress(90, 'Processando no servidor...');
+                        }
+                    };
+
+                    xhr.send(formData);
                 });
 
-                if (!response.ok) {
-                    const errInfo = await response.json().catch(() => ({}));
-                    throw new Error(errInfo.detail || `Erro do servidor (${response.status})`);
+                if (!responseBlob) {
+                    throw new Error('Resposta vazia do servidor.');
                 }
 
                 const resultContainer = document.getElementById('results-container');
                 const contentDiv = document.getElementById('result-content');
                 contentDiv.innerHTML = ''; // Clear previous
 
+                const contentType = responseBlob.type || 'application/octet-stream';
+
                 if (endpoint === '/html') {
-                    const htmlText = await response.text();
+                    const htmlText = await responseBlob.text();
                     lastResultBlob = new Blob([htmlText], { type: 'text/html' });
-                    lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + ".html";
-                    
+                    lastResultName = currentFile.name.replace(/\.[^/.]+$/, '') + '.html';
                     const iframe = document.createElement('iframe');
                     contentDiv.appendChild(iframe);
-                    // Write to iframe safely
                     iframe.contentWindow.document.open();
                     iframe.contentWindow.document.write(htmlText);
                     iframe.contentWindow.document.close();
                 } else if (endpoint === '/diagnostico') {
-                    const diag = await response.json();
-                    
-                    // Build a beautiful diagnostic UI
+                    const text = await responseBlob.text();
+                    const diag = JSON.parse(text);
                     const isPdf = diag.tipo === 'pdf';
                     const recMethod = diag.metodo_recomendado === 'texto' ? 'Texto Direto' : 
                                       (diag.metodo_recomendado === 'ocr' ? 'Leitura Óptica (OCR)' : 'Análise Visual');
                     const recFormat = diag.formato_recomendado === 'blocos' ? 'Blocos JSON (Preserva Imagens)' : 'Texto Simples (TXT)';
-                    
                     let htmlDiag = `
                         <div style="padding: 2rem; color: var(--text-main);">
                             <h2 style="color: var(--primary); margin-bottom: 1rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem;">Relatório de Diagnóstico</h2>
@@ -642,7 +745,7 @@
                             <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
                         `;
                         for (const [key, value] of Object.entries(diag.metadados)) {
-                            if(key !== 'paginas_total' && value) {
+                            if (key !== 'paginas_total' && value) {
                                 htmlDiag += `
                                     <tr style="border-bottom: 1px solid var(--glass-border);">
                                         <td style="padding: 0.8rem; color: var(--primary); width: 30%; font-weight: 600;">${key}</td>
@@ -655,40 +758,36 @@
                     }
 
                     htmlDiag += `</div>`;
-                    
+
                     contentDiv.innerHTML = htmlDiag;
-                    
-                    // We also save the raw JSON for the download button
+
                     const rawJson = JSON.stringify(diag, null, 2);
                     lastResultBlob = new Blob([rawJson], { type: 'application/json' });
                     lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + "_diagnostico.json";
-
                 } else {
-                    const contentType = response.headers.get("content-type");
-                    let text = '';
-                    if (contentType && contentType.includes("application/json")) {
-                        const json = await response.json();
-                        text = JSON.stringify(json, null, 2);
-                        lastResultBlob = new Blob([text], { type: 'application/json' });
-                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + "_resultado.json";
+                    let text;
+                    if (contentType.includes('application/json')) {
+                        text = await responseBlob.text();
+                        const json = JSON.parse(text);
+                        lastResultBlob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, '') + '_resultado.json';
+                        const pre = document.createElement('pre');
+                        pre.textContent = JSON.stringify(json, null, 2);
+                        contentDiv.appendChild(pre);
                     } else {
-                        text = await response.text();
+                        text = await responseBlob.text();
                         lastResultBlob = new Blob([text], { type: 'text/plain' });
-                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, "") + ".txt";
+                        lastResultName = currentFile.name.replace(/\.[^/.]+$/, '') + '.txt';
+                        const pre = document.createElement('pre');
+                        pre.textContent = text;
+                        contentDiv.appendChild(pre);
                     }
-                    const pre = document.createElement('pre');
-                    pre.textContent = text;
-                    contentDiv.appendChild(pre);
                 }
 
+                setProgress(100, 'Concluído.');
                 resultContainer.style.display = 'block';
                 showToast('Processamento concluído com sucesso!');
-
-                // Scroll to results
-                setTimeout(() => {
-                    resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 100);
-
+                setTimeout(() => { resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
             } catch (error) {
                 console.error(error);
                 showToast(error.message, true);
